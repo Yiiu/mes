@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, session, globalShortcut } = require('electron')
 const {
   mainLoadURL,
   printLoadURL,
@@ -6,15 +6,86 @@ const {
   showPrint,
   isOpenPrintDevTools,
 } = require('./dev_config')
+// const log = require('electron-log');
+// const path = require('path');
+// const fs = require('fs');
+
 const handleUpdate = require('./src/main/app_update')
 const { appEvent } = require('./src/event')
-// const path = require('path')
+
+app.commandLine.appendSwitch('disable-web-security')
+app.commandLine.appendSwitch('ignore-certificate-errors')
+app.commandLine.appendSwitch('allow-insecure-localhost', 'true')
+
+// 自定义桌面上的日志文件夹
+// log.transports.file.resolvePathFn = () => {
+//   const logDir = path.join(app.getPath('desktop'), 'electron-logs');
+//   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
+//   return path.join(logDir, `main-${new Date().toISOString().replace(/:/g, '-')}.log`);
+// };
+
+function handleLoadFailed(url, errorCode, errorDescription, validatedURL) {
+  const maxRetries = 3;
+  let retryCount = 0;
+
+  console.error(`页面加载失败: ${validatedURL} (${errorCode} ${errorDescription})`);
+
+  const retryLoad = () => {
+    if (retryCount < maxRetries) {
+      retryCount++;
+      console.log(`尝试重新加载 (${retryCount}/${maxRetries})...`);
+      mainWindow.loadURL(url).catch(() => {
+        setTimeout(retryLoad, 2000); // 2秒后重试
+      });
+    }
+  };
+
+  retryLoad();
+}
+
+const createMenu = () => {
+  const myMenuTemplate = [
+    {
+      // 设置菜单项文本
+      label: '操作',
+      // 设置子菜单
+      submenu: [
+        {
+          label: '刷新',
+          // accelerator: "CmdOrCtrl+R", 
+          click: () => {
+            mainWindow.reload();
+          }
+        },
+        {
+          label: '打开控制台',
+          // accelerator: "CmdOrCtrl+E", 
+          click: () => {
+            mainWindow.webContents.openDevTools()
+          }
+        }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    }
+  ];
+  const menus = Menu.buildFromTemplate(myMenuTemplate)
+  Menu.setApplicationMenu(menus)
+}
+
 
 let mainWindow = null
 let printerWindow = null
-
-app.commandLine.appendSwitch('ignore-certificate-errors')
-
 function createWindow() {
   // 创建浏览器窗口
   mainWindow = new BrowserWindow({
@@ -22,15 +93,41 @@ function createWindow() {
     height: 600,
     center: true,
     webPreferences: {
-      // preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
+      contextIsolation: false,
       enableRemoteModule: true,
-      contextIsolation: false
+      allowRunningInsecureContent: true,
     },
   })
+
+  mainWindow.webContents.session.setCertificateVerifyProc((request, callback) => {
+      // 对于所有请求都允许通过，但保持会话状态
+      callback(0);
+  });
   mainWindow.focus()
 
+
+  console.log(mainLoadURL)
+  // log.info('mainLoadURL', mainLoadURL);
   mainWindow.loadURL(mainLoadURL)
+
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    // -3 是主文档被取消（通常是加载途中跳转/重载），不算失败
+    if (errorCode === -3) return
+    handleLoadFailed(mainLoadURL, errorCode, errorDescription, validatedURL)
+  })
+
+  // 渲染进程崩溃时给出可见提示，避免静默白屏
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error(`渲染进程异常退出: ${details.reason} ${details.exitCode}`)
+  })
+
+  // 渲染进程日志转发到主进程，便于打包后排查问题
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      console.log(`[renderer] ${message} (${sourceId}:${line})`)
+    }
+  })
 
   if (isOpenDevTools) {
     mainWindow.webContents.openDevTools()
@@ -54,9 +151,17 @@ function createPrinterWindow(url) {
     show: showPrint,
     webPreferences: {
       nodeIntegration: true,
+      contextIsolation: false,
       enableRemoteModule: true,
+      webSecurity: true,
+      allowRunningInsecureContent: true
     },
   })
+
+  printerWindow.webContents.session.setCertificateVerifyProc((request, callback) => {
+    callback(0);
+  });
+  console.log("print", url)
 
   printerWindow.loadURL(url || printLoadURL)
 
@@ -69,13 +174,17 @@ function createPrinterWindow(url) {
   })
 }
 
-app.whenReady().then(() => {
-  app.allowRendererProcessReuse = true
+app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+  event.preventDefault();
+  callback(true); // 允许继续加载
+});
 
-  Menu.setApplicationMenu(null)
-
+app.whenReady().then(async () => {
+  await session.defaultSession.clearCache()
+  app.allowRendererProcessReuse = false
+  createMenu()
   createWindow()
-  // createPrinterWindow()
+  createPrinterWindow()
   handleUpdate(sendUpdateMessage)
 })
 
@@ -97,6 +206,15 @@ app.on('activate', () => {
     createPrinterWindow()
   }
 })
+
+// app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+  
+//     // Prevent having error
+//     event.preventDefault()
+//     // and continue
+//     callback(true)
+
+// })
 
 // 接受渲染进程对 print 事件
 ipcMain.handle('print', (event, payload) => {

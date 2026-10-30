@@ -68,17 +68,28 @@ ncu -u
 
 Q: What to do if the dependencies cannot be downloaded due to network problems
 
-A: ref https://registry.npmmirror.com/mirrors
+A: ref https://npm.taobao.org/mirrors
 
 First execute the following command to add the mirror, and then use `yarn install` to download the dependencies
 
 ```zsh
-yarn config set registry https://registry.npmmirror.com -g
-yarn config set disturl https://registry.npmmirror.com/dist -g
-yarn config set electron_mirror https://registry.npmmirror.com/mirrors/electron/ -g
-yarn config set sass_binary_site https://registry.npmmirror.com/mirrors/node-sass/ -g
-yarn config set phantomjs_cdnurl https://registry.npmmirror.com/mirrors/phantomjs/ -g
+yarn config set registry https://registry.npm.taobao.org -g
+yarn config set disturl https://npm.taobao.org/dist -g
+yarn config set electron_mirror https://npmmirror.com/mirrors/electron/ -g
+yarn config set sass_binary_site https://npmmirror.com/mirrors/node-sass/ -g
+yarn config set phantomjs_cdnurl https://npmmirror.com/mirrors/phantomjs/ -g
 ```
+
+yarn config set electron_mirror=https://npmmirror.com/mirrors/electron/
+
+## mac 不能打包
+
+mac 如果你需要跑的话，你需要将 package.json 改成 "serialport": "^10.2.1",  这个打包后不能不跑，因为串口方法改了，调试用10.2.1，打包后用9.2.1
+windows 下是 "serialport": "^9.2.1"",
+
+## node 版本
+
+建议 node 16.17.4
 
 if it still does not work, you can try to use `yarn --ignore-optional` to skip the download of optional dependencies
 
